@@ -119,7 +119,7 @@ class _AdminAppState extends State<AdminApp> {
       return;
     }
 
-    final user = FirebaseAuth.instance.currentUser;
+    final user = await FirebaseAuth.instance.authStateChanges().first;
     if (user == null) {
       await AdminSession.clear(prefs);
       if (!mounted) return;
@@ -2160,7 +2160,8 @@ Future<void> _showExamDialog(
 }) async {
   final editing = existingExam != null;
   final breakdown = _subjectBreakdown(existingExam);
-  final totalMcqs = _asInt(existingExam?['questions'] ?? _dailyPracticeTotal);
+  var totalMcqs = _asInt(existingExam?['questions'] ?? _dailyPracticeTotal);
+  final existingCompletions = _asInt(existingExam?['completions']);
   final title = TextEditingController(
     text: existingExam?['title']?.toString() ?? 'Daily Practice',
   );
@@ -2169,9 +2170,6 @@ Future<void> _showExamDialog(
   );
   final questions = TextEditingController(
     text: _asInt(existingExam?['questions'] ?? totalMcqs).toString(),
-  );
-  final completions = TextEditingController(
-    text: _asInt(existingExam?['completions']).toString(),
   );
   final passRate = TextEditingController(
     text: _asDouble(existingExam?['passRate'] ?? 70).toStringAsFixed(1),
@@ -2253,7 +2251,7 @@ Future<void> _showExamDialog(
                             ),
                             const SizedBox(height: 2),
                             const Text(
-                              'Daily Practice uses the required 100 MCQ subject pattern. Add an optional first MCQ below.',
+                              'Set the exam total and subject pattern. Add an optional first MCQ below.',
                               style: TextStyle(color: Color(0xFF5E6878)),
                             ),
                           ],
@@ -2280,9 +2278,12 @@ Future<void> _showExamDialog(
                             title: title,
                             category: category,
                             questions: questions,
-                            completions: completions,
                             passRate: passRate,
                             status: status,
+                            onQuestionsChanged: (value) => setDialogState(
+                              () =>
+                                  totalMcqs = int.tryParse(value) ?? totalMcqs,
+                            ),
                             onStatusChanged: (value) =>
                                 setDialogState(() => status = value ?? status),
                           );
@@ -2350,7 +2351,7 @@ Future<void> _showExamDialog(
                                 : category.text.trim(),
                             questions:
                                 int.tryParse(questions.text) ?? totalMcqs,
-                            completions: int.tryParse(completions.text) ?? 0,
+                            completions: existingCompletions,
                             passRate: double.tryParse(passRate.text) ?? 0,
                             status: status,
                             subjectBreakdown: breakdown,
@@ -2398,18 +2399,18 @@ class _ExamDetailsForm extends StatelessWidget {
     required this.title,
     required this.category,
     required this.questions,
-    required this.completions,
     required this.passRate,
     required this.status,
+    required this.onQuestionsChanged,
     required this.onStatusChanged,
   });
 
   final TextEditingController title;
   final TextEditingController category;
   final TextEditingController questions;
-  final TextEditingController completions;
   final TextEditingController passRate;
   final String status;
+  final ValueChanged<String> onQuestionsChanged;
   final ValueChanged<String?> onStatusChanged;
 
   @override
@@ -2435,7 +2436,11 @@ class _ExamDetailsForm extends StatelessWidget {
               child: TextField(
                 controller: questions,
                 keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: 'Total MCQs'),
+                decoration: const InputDecoration(
+                  labelText: 'Total MCQs',
+                  helperText: 'This total is saved with the exam.',
+                ),
+                onChanged: onQuestionsChanged,
               ),
             ),
             const SizedBox(width: 12),
@@ -2457,24 +2462,15 @@ class _ExamDetailsForm extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(
-              child: TextField(
-                controller: completions,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: 'Completions'),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: TextField(
-                controller: passRate,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: 'Pass rate'),
-              ),
-            ),
-          ],
+        TextField(
+          controller: passRate,
+          keyboardType: TextInputType.number,
+          decoration: const InputDecoration(labelText: 'Pass rate'),
+        ),
+        const SizedBox(height: 10),
+        const Text(
+          'Completed attempts are tracked automatically after users take this exam.',
+          style: TextStyle(color: Color(0xFF5E6878), fontSize: 12),
         ),
       ],
     );
@@ -2492,7 +2488,7 @@ class _DailyPracticeTable extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const _FormSectionLabel('Daily Practice (100 MCQs)'),
+        _FormSectionLabel('Subject Pattern ($total MCQs)'),
         const SizedBox(height: 12),
         Container(
           decoration: BoxDecoration(
