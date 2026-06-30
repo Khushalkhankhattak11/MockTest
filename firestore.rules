@@ -1,0 +1,46 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function adminDoc(uid) {
+      return get(/databases/$(database)/documents/admins/$(uid));
+    }
+
+    function isAdmin() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+        && adminDoc(request.auth.uid).data.active == true
+        && adminDoc(request.auth.uid).data.role in ['admin', 'superAdmin'];
+    }
+
+    function isSuperAdmin() {
+      return isAdmin()
+        && adminDoc(request.auth.uid).data.role == 'superAdmin';
+    }
+
+    match /admins/{adminId} {
+      allow read: if signedIn() && (request.auth.uid == adminId || isAdmin());
+      allow write: if isSuperAdmin();
+    }
+
+    match /exams/{examId} {
+      allow read, write: if isAdmin();
+
+      match /mcqs/{mcqId} {
+        allow read, write: if isAdmin();
+      }
+    }
+
+    match /questions/{questionId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /users/{userId} {
+      allow read, write: if isAdmin();
+    }
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "firestore": {
+    "rules": "firestore.rules"
+  },
+  "flutter": {
+    "platforms": {
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "mock-test-c8667",
+          "configurations": {
+            "web": "1:360518918464:web:1bad0619876b7d36159aa5"
+          }
+        }
+      }
+    }
+  }
+}
