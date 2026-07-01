@@ -524,6 +524,9 @@ const _mcqSubjects = [
   'General Knowledge',
   'Computer',
   'Mathematics',
+  'Physics',
+  'Chemistry',
+  'Biology',
   'Current Affairs',
   'Pakistan Studies',
   'Islamic Studies',
@@ -2159,9 +2162,14 @@ Future<void> _showExamDialog(
   Map<String, dynamic>? existingExam,
 }) async {
   final editing = existingExam != null;
-  final breakdown = _subjectBreakdown(existingExam);
+  final breakdown = editing
+      ? _subjectBreakdown(existingExam)
+      : <Map<String, dynamic>>[];
   var totalMcqs = _asInt(existingExam?['questions'] ?? _dailyPracticeTotal);
   final existingCompletions = _asInt(existingExam?['completions']);
+  final subject = TextEditingController();
+  final subjectMcqs = TextEditingController();
+  final subjectFocus = FocusNode();
   final title = TextEditingController(
     text: existingExam?['title']?.toString() ?? 'Daily Practice',
   );
@@ -2287,16 +2295,56 @@ Future<void> _showExamDialog(
                             onStatusChanged: (value) =>
                                 setDialogState(() => status = value ?? status),
                           );
-                          final subjectTable = _DailyPracticeTable(
+                          final subjectEditor = _SubjectPatternEditor(
                             subjects: breakdown,
                             total: totalMcqs,
+                            subject: subject,
+                            subjectMcqs: subjectMcqs,
+                            subjectFocus: subjectFocus,
+                            onAddSubject: () {
+                              final name = subject.text.trim();
+                              final mcqs = int.tryParse(subjectMcqs.text) ?? 0;
+                              if (name.isEmpty || mcqs <= 0) {
+                                _showSnack(
+                                  context,
+                                  'Enter a subject and MCQ count.',
+                                  error: true,
+                                );
+                                return;
+                              }
+                              setDialogState(() {
+                                final existingIndex = breakdown.indexWhere(
+                                  (item) =>
+                                      item['subject']
+                                          ?.toString()
+                                          .trim()
+                                          .toLowerCase() ==
+                                      name.toLowerCase(),
+                                );
+                                if (existingIndex == -1) {
+                                  breakdown.add({
+                                    'subject': name,
+                                    'mcqs': mcqs,
+                                  });
+                                } else {
+                                  breakdown[existingIndex] = {
+                                    'subject': name,
+                                    'mcqs': mcqs,
+                                  };
+                                }
+                                subject.clear();
+                                subjectMcqs.clear();
+                              });
+                            },
+                            onRemoveSubject: (index) =>
+                                setDialogState(() => breakdown.removeAt(index)),
                           );
                           if (stacked) {
                             return Column(
                               children: [
                                 details,
                                 const SizedBox(height: 20),
-                                subjectTable,
+                                subjectEditor,
                               ],
                             );
                           }
@@ -2305,7 +2353,7 @@ Future<void> _showExamDialog(
                             children: [
                               Expanded(child: details),
                               const SizedBox(width: 24),
-                              Expanded(child: subjectTable),
+                              Expanded(child: subjectEditor),
                             ],
                           );
                         },
@@ -2341,6 +2389,21 @@ Future<void> _showExamDialog(
                     FilledButton.icon(
                       onPressed: () async {
                         try {
+                          final cleanBreakdown = breakdown
+                              .map(
+                                (subject) => <String, dynamic>{
+                                  'subject':
+                                      subject['subject']?.toString().trim() ??
+                                      '',
+                                  'mcqs': _asInt(subject['mcqs']),
+                                },
+                              )
+                              .where(
+                                (subject) =>
+                                    subject['subject'].toString().isNotEmpty &&
+                                    _asInt(subject['mcqs']) > 0,
+                              )
+                              .toList();
                           await repository.saveExam(
                             id: existingExam?['id']?.toString(),
                             title: title.text.trim().isEmpty
@@ -2354,7 +2417,7 @@ Future<void> _showExamDialog(
                             completions: existingCompletions,
                             passRate: double.tryParse(passRate.text) ?? 0,
                             status: status,
-                            subjectBreakdown: breakdown,
+                            subjectBreakdown: cleanBreakdown,
                             questionPrompt: prompt.text,
                             questionOptions: [
                               optionA.text,
@@ -2392,6 +2455,9 @@ Future<void> _showExamDialog(
       ),
     ),
   );
+  subject.dispose();
+  subjectMcqs.dispose();
+  subjectFocus.dispose();
 }
 
 class _ExamDetailsForm extends StatelessWidget {
@@ -2477,18 +2543,111 @@ class _ExamDetailsForm extends StatelessWidget {
   }
 }
 
-class _DailyPracticeTable extends StatelessWidget {
-  const _DailyPracticeTable({required this.subjects, required this.total});
+class _SubjectPatternEditor extends StatelessWidget {
+  const _SubjectPatternEditor({
+    required this.subjects,
+    required this.total,
+    required this.subject,
+    required this.subjectMcqs,
+    required this.subjectFocus,
+    required this.onAddSubject,
+    required this.onRemoveSubject,
+  });
 
   final List<Map<String, dynamic>> subjects;
   final int total;
+  final TextEditingController subject;
+  final TextEditingController subjectMcqs;
+  final FocusNode subjectFocus;
+  final VoidCallback onAddSubject;
+  final ValueChanged<int> onRemoveSubject;
 
   @override
   Widget build(BuildContext context) {
+    final patternTotal = subjects.fold<int>(
+      0,
+      (runningTotal, subject) => runningTotal + _asInt(subject['mcqs']),
+    );
+    final totalMatches = patternTotal == total;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _FormSectionLabel('Subject Pattern ($total MCQs)'),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              flex: 2,
+              child: RawAutocomplete<String>(
+                textEditingController: subject,
+                focusNode: subjectFocus,
+                optionsBuilder: (value) {
+                  final query = value.text.trim().toLowerCase();
+                  if (query.isEmpty) return _mcqSubjects;
+                  return _mcqSubjects.where(
+                    (subject) => subject.toLowerCase().contains(query),
+                  );
+                },
+                fieldViewBuilder:
+                    (context, controller, focusNode, onFieldSubmitted) {
+                      return TextField(
+                        controller: controller,
+                        focusNode: focusNode,
+                        decoration: const InputDecoration(
+                          labelText: 'Subject',
+                          hintText: 'English, Physics...',
+                        ),
+                        textInputAction: TextInputAction.next,
+                      );
+                    },
+                optionsViewBuilder: (context, onSelected, options) {
+                  return Align(
+                    alignment: Alignment.topLeft,
+                    child: Material(
+                      elevation: 3,
+                      borderRadius: BorderRadius.circular(8),
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(
+                          maxHeight: 220,
+                          maxWidth: 260,
+                        ),
+                        child: ListView.builder(
+                          padding: EdgeInsets.zero,
+                          shrinkWrap: true,
+                          itemCount: options.length,
+                          itemBuilder: (context, index) {
+                            final option = options.elementAt(index);
+                            return ListTile(
+                              dense: true,
+                              title: Text(option),
+                              onTap: () => onSelected(option),
+                            );
+                          },
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: TextField(
+                controller: subjectMcqs,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: 'MCQs'),
+                onSubmitted: (_) => onAddSubject(),
+              ),
+            ),
+            const SizedBox(width: 10),
+            IconButton.filledTonal(
+              tooltip: 'Add subject',
+              onPressed: onAddSubject,
+              icon: const Icon(Icons.add),
+            ),
+          ],
+        ),
         const SizedBox(height: 12),
         Container(
           decoration: BoxDecoration(
@@ -2497,20 +2656,46 @@ class _DailyPracticeTable extends StatelessWidget {
           ),
           child: Column(
             children: [
-              _SubjectRow(subject: 'Subject', mcqs: 'MCQs', header: true),
-              for (final subject in subjects)
-                _SubjectRow(
-                  subject: subject['subject']?.toString() ?? '',
-                  mcqs: _asInt(subject['mcqs']).toString(),
-                ),
+              const _SubjectRow(subject: 'Subject', mcqs: 'MCQs', header: true),
+              if (subjects.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.all(14),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      'No subjects added yet.',
+                      style: TextStyle(color: Color(0xFF5E6878)),
+                    ),
+                  ),
+                )
+              else
+                for (final entry in subjects.indexed)
+                  _SubjectRow(
+                    subject: entry.$2['subject']?.toString() ?? '',
+                    mcqs: _asInt(entry.$2['mcqs']).toString(),
+                    onDelete: () => onRemoveSubject(entry.$1),
+                  ),
               _SubjectRow(
-                subject: 'Total',
-                mcqs: total.toString(),
+                subject: 'Pattern total',
+                mcqs: patternTotal.toString(),
                 header: true,
               ),
+              if (!totalMatches)
+                _SubjectRow(
+                  subject: 'Exam total',
+                  mcqs: total.toString(),
+                  warning: true,
+                ),
             ],
           ),
         ),
+        if (!totalMatches) ...[
+          const SizedBox(height: 8),
+          const Text(
+            'Pattern total does not match Total MCQs.',
+            style: TextStyle(color: Color(0xFFBA1A1A), fontSize: 12),
+          ),
+        ],
       ],
     );
   }
@@ -2521,16 +2706,24 @@ class _SubjectRow extends StatelessWidget {
     required this.subject,
     required this.mcqs,
     this.header = false,
+    this.warning = false,
+    this.onDelete,
   });
 
   final String subject;
   final String mcqs;
   final bool header;
+  final bool warning;
+  final VoidCallback? onDelete;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      color: header ? const Color(0xFFEFF4FF) : Colors.white,
+      color: header
+          ? const Color(0xFFEFF4FF)
+          : warning
+          ? const Color(0xFFFFF1F1)
+          : Colors.white,
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       child: Row(
         children: [
@@ -2545,9 +2738,19 @@ class _SubjectRow extends StatelessWidget {
           Text(
             mcqs,
             style: TextStyle(
-              fontWeight: header ? FontWeight.w800 : FontWeight.w600,
+              color: warning ? const Color(0xFFBA1A1A) : null,
+              fontWeight: header || warning ? FontWeight.w800 : FontWeight.w600,
             ),
           ),
+          if (onDelete != null) ...[
+            const SizedBox(width: 8),
+            IconButton(
+              tooltip: 'Remove subject',
+              visualDensity: VisualDensity.compact,
+              onPressed: onDelete,
+              icon: const Icon(Icons.close, size: 18),
+            ),
+          ],
         ],
       ),
     );
@@ -3151,7 +3354,7 @@ List<McqDraft> _parseBulkMcqs(
       McqDraft(
         exam: exam,
         subject: subject,
-        prompt: prompt.trim(),
+        prompt: _cleanBulkPrompt(prompt),
         options: List<String>.from(options),
         answerIndex: answerIndex.clamp(0, 3).toInt(),
         difficulty: difficulty,
@@ -3197,6 +3400,13 @@ List<McqDraft> _parseBulkMcqs(
   return drafts;
 }
 
+String _cleanBulkPrompt(String? prompt) {
+  return (prompt ?? '')
+      .trim()
+      .replaceFirst(RegExp(r'^\d+\s*[\).]\s*'), '')
+      .trim();
+}
+
 String _formatNumber(int value) {
   final text = value.toString();
   final buffer = StringBuffer();
@@ -3238,12 +3448,13 @@ List<Map<String, dynamic>> _subjectBreakdown(Map<String, dynamic>? exam) {
   if (raw is List) {
     final parsed = raw
         .whereType<Map>()
-        .map(
-          (subject) => <String, dynamic>{
-            'subject': subject['subject']?.toString() ?? '',
+        .map((subject) {
+          final name = subject['subject']?.toString() ?? '';
+          return <String, dynamic>{
+            'subject': name,
             'mcqs': _asInt(subject['mcqs']),
-          },
-        )
+          };
+        })
         .where((subject) => subject['subject'].toString().isNotEmpty)
         .toList();
     if (parsed.isNotEmpty) return parsed;
